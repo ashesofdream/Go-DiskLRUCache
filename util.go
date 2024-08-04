@@ -1,6 +1,7 @@
 package disklrucache
 
 import (
+	"io"
 	"os"
 	"strconv"
 )
@@ -20,22 +21,23 @@ func (w *EditorWriter) Close() error {
 	return w.file.Close()
 }
 
-type AutoRemoveReadCloser struct {
-	file *os.File
+type Reader interface {
+	io.Reader
+	io.ReaderAt
+	io.Seeker
+	io.Closer
+}
+type AutoRemoveReader struct {
+	*os.File
 }
 
-func (r *AutoRemoveReadCloser) Read(p []byte) (n int, err error) {
-	return r.file.Read(p)
-}
-
-func (r *AutoRemoveReadCloser) Close() error {
-	err := r.file.Close()
+func (r *AutoRemoveReader) Close() error {
+	err := r.File.Close()
 	if err == nil {
-		os.Remove(r.file.Name())
+		os.Remove(r.Name())
 	}
 	return err
 }
-
 func GetAvailableTmpFilename(name string) string {
 	for i := 0; i < 10000; i++ {
 		tmpName := name + ".tmp" + strconv.Itoa(i)

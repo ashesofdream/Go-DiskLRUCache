@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -366,7 +367,8 @@ func TestLRUCacheRebuildJournal(t *testing.T) {
 	for target_cur != nil && origin_cur != nil {
 		if target_cur.val.key != origin_cur.val.key ||
 			target_cur.val.size != origin_cur.val.size {
-			t.Errorf("origin_list data error, origin:%s, target:%s", origin_cur.val.key, target_cur.val.key)
+			t.Errorf("origin_list data error, origin:%s, target:%s,orgin_size:%d,target_size:%d",
+				origin_cur.val.key, target_cur.val.key, origin_cur.val.size, target_cur.val.size)
 			return
 		}
 		target_cur = target_cur.next
@@ -518,5 +520,43 @@ func TestSnapShot(t *testing.T) {
 			writer.Close()
 			editor.Commit()
 		}
+	}
+}
+
+func TestRemoveReader(t *testing.T) {
+	fmt.Printf("Testing RemoveReader...\n")
+	data := GetAllTestData()
+	os.RemoveAll(CACHE_DIR)
+	if runtime.GOOS == "windows" {
+		cache := CreateDiskLRUCache(CACHE_DIR, 1, 1, TEST_DATA_SIZE/10)
+		key := data[0].filename
+		editor := cache.Edit(key)
+		cache_path := editor.entry.GetDirtyFilename() + "0"
+		strem, err := editor.CreateOutputStream()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		strem.Write(data[0].data)
+		strem.Close()
+		editor.Commit()
+
+		snapshot, err := cache.Get(key)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := os.Stat(cache_path); os.IsNotExist(err) {
+			t.Error("ReadLink Not Exist")
+			return
+		}
+		snapshot.reader.Close()
+		if _, err := os.Stat(cache_path); err == nil {
+			t.Error("ReadLink Should be deleted")
+			return
+		}
+
+		cache.Close()
+
 	}
 }

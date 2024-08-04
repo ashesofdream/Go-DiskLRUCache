@@ -151,7 +151,7 @@ func (editor *DiskLRUCacheEditor) CreateInputStream() (io.ReadCloser, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &AutoRemoveReadCloser{file: file}, nil
+		return &AutoRemoveReader{File: file}, nil
 	}
 	file, err := os.OpenFile(editor.entry.key, os.O_RDONLY, 0666)
 	return file, err
@@ -171,6 +171,13 @@ func (editor *DiskLRUCacheEditor) Commit() error {
 		os.Remove(editor.entry.GetCleanFilename())
 		return nil
 	}
+
+	editor.entry.curEditor = nil
+	editor.base.curSize += (editor.writeSize - editor.entry.size)
+	editor.entry.size = editor.writeSize
+	editor.commited = true
+	editor.entry.readable = true
+
 	_, err := editor.base.journalFile.WriteString(
 		fmt.Sprintf("%s %s %d\n", CLEAN, editor.entry.key, editor.entry.size),
 	)
@@ -181,21 +188,14 @@ func (editor *DiskLRUCacheEditor) Commit() error {
 	os.Remove(editor.entry.GetCleanFilename())
 	os.Rename(editor.entry.GetDirtyFilename(), editor.entry.GetCleanFilename())
 
-	editor.entry.curEditor = nil
-
-	editor.entry.size = editor.writeSize
-	editor.base.curSize += (editor.writeSize - editor.entry.size)
-	editor.commited = true
-	editor.entry.readable = true
 	editor.base.checkFull()
 	return err
 }
 
 type DiskLRUCacheSnapshot struct {
-	*DiskLRUCache
 	key    string
 	size   int64
-	reader io.ReadCloser
+	reader Reader
 }
 
 func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
@@ -220,7 +220,7 @@ func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
 	// 		return nil, nil
 	// 	}
 	// }
-	var reader io.ReadCloser
+	var reader Reader
 	// for windows,open a link to avoid file lock
 	if runtime.GOOS == "windows" {
 		tmpName := GetAvailableTmpFilename(entry.GetCleanFilename())
@@ -235,7 +235,8 @@ func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
 			}
 			return nil, err
 		}
-		reader = &AutoRemoveReadCloser{file: file}
+		reader = &AutoRemoveReader{File: file}
+
 	} else {
 		file, err := os.OpenFile(entry.GetCleanFilename(), os.O_RDONLY, 0666)
 		if err != nil {
@@ -250,7 +251,7 @@ func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
 	cache.journalFile.WriteString(
 		fmt.Sprintf("%s %s \n", READ, key),
 	)
-	return &DiskLRUCacheSnapshot{cache, key, entry.size, reader}, nil
+	return &DiskLRUCacheSnapshot{key, entry.size, reader}, nil
 }
 
 func CreateDiskLRUCache(cachePath string, appVersion int, cacheVersion int, maxsize int64) *DiskLRUCache {
