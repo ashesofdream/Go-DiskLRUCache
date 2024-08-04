@@ -142,7 +142,7 @@ func (editor *DiskLRUCacheEditor) CreateInputStream() (io.ReadCloser, error) {
 		return nil, nil
 	}
 	if runtime.GOOS == "windows" {
-		tmpName := GetAvailableTmpFilename(editor.entry.GetCleanFilename())
+		tmpName := getAvailableTmpFilename(editor.entry.GetCleanFilename())
 		err := os.Link(editor.entry.GetCleanFilename(), tmpName)
 		if err != nil {
 			return nil, err
@@ -193,9 +193,9 @@ func (editor *DiskLRUCacheEditor) Commit() error {
 }
 
 type DiskLRUCacheSnapshot struct {
-	key    string
-	size   int64
-	reader Reader
+	Key    string
+	Size   int64
+	Reader Reader
 }
 
 func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
@@ -223,7 +223,7 @@ func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
 	var reader Reader
 	// for windows,open a link to avoid file lock
 	if runtime.GOOS == "windows" {
-		tmpName := GetAvailableTmpFilename(entry.GetCleanFilename())
+		tmpName := getAvailableTmpFilename(entry.GetCleanFilename())
 		err := os.Link(entry.GetCleanFilename(), tmpName)
 		if err != nil {
 			return nil, err
@@ -336,11 +336,11 @@ func (cache *DiskLRUCache) RebuildJournal() error {
 		cache.journalFile = nil
 	}
 	// backup old journal file and rename to new
-	err = RenameFile(filepath.Join(cache.cachePath, JOURNAL_FILENAME), filepath.Join(cache.cachePath, JOURNAL_BACKUP_FILE), true)
+	err = renameFile(filepath.Join(cache.cachePath, JOURNAL_FILENAME), filepath.Join(cache.cachePath, JOURNAL_BACKUP_FILE), true)
 	if err != nil {
 		log.Printf("warning: rename journal file failed,err:%s", err)
 	}
-	err = RenameFile(filepath.Join(cache.cachePath, JOURNAL_TMP_FILENAME), filepath.Join(cache.cachePath, JOURNAL_FILENAME), true)
+	err = renameFile(filepath.Join(cache.cachePath, JOURNAL_TMP_FILENAME), filepath.Join(cache.cachePath, JOURNAL_FILENAME), true)
 	if err != nil {
 		log.Panicf("rename new journal file failed,err:%s", err)
 	}

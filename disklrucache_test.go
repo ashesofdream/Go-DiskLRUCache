@@ -213,9 +213,9 @@ func TestLRUCache(t *testing.T) {
 			if cache_data == nil {
 				t.Error("cache data should not be nil")
 			}
-			totalSize += cache_data.size
-			cur_data := make([]byte, cache_data.size)
-			cache_data.reader.Read(cur_data)
+			totalSize += cache_data.Size
+			cur_data := make([]byte, cache_data.Size)
+			cache_data.Reader.Read(cur_data)
 			if bytes.Compare(cur_data, data[i].data) != 0 {
 				t.Errorf("data not equal, %s\n,%s\n", string(cur_data), string(data[i].data))
 			}
@@ -276,11 +276,11 @@ func ReadDataRoutine(cache *DiskLRUCache, data []fileData, productSignalchan cha
 			}
 			continue
 		}
-		cur_data := make([]byte, snapshot.size)
-		snapshot.reader.Read(cur_data)
-		snapshot.reader.Close()
-		if snapshot.size != int64(len(d.data)) {
-			t.Errorf("cache data size error, %d %d", snapshot.size, int64(len(d.data)))
+		cur_data := make([]byte, snapshot.Size)
+		snapshot.Reader.Read(cur_data)
+		snapshot.Reader.Close()
+		if snapshot.Size != int64(len(d.data)) {
+			t.Errorf("cache data size error, %d %d", snapshot.Size, int64(len(d.data)))
 			*isRunning = false
 			return
 		}
@@ -504,9 +504,9 @@ func TestSnapShot(t *testing.T) {
 			writer.Write(val)
 			writer.Close()
 			editor.Commit()
-			snap_data := make([]byte, snapshot.size)
-			snapshot.reader.Read(snap_data)
-			snapshot.reader.Close()
+			snap_data := make([]byte, snapshot.Size)
+			snapshot.Reader.Read(snap_data)
+			snapshot.Reader.Close()
 			if bytes.Compare(snap_data, data[i-1].data) != 0 {
 				t.Errorf("snap_data not equal, snap_size:%d,true_size:%d", len(snap_data), len(data[i-1].data))
 			}
@@ -550,7 +550,7 @@ func TestRemoveReader(t *testing.T) {
 			t.Error("ReadLink Not Exist")
 			return
 		}
-		snapshot.reader.Close()
+		snapshot.Reader.Close()
 		if _, err := os.Stat(cache_path); err == nil {
 			t.Error("ReadLink Should be deleted")
 			return

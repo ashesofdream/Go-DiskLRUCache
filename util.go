@@ -38,7 +38,7 @@ func (r *AutoRemoveReader) Close() error {
 	}
 	return err
 }
-func GetAvailableTmpFilename(name string) string {
+func getAvailableTmpFilename(name string) string {
 	for i := 0; i < 10000; i++ {
 		tmpName := name + ".tmp" + strconv.Itoa(i)
 		if _, err := os.Stat(tmpName); os.IsNotExist(err) {
@@ -48,7 +48,7 @@ func GetAvailableTmpFilename(name string) string {
 	return ""
 }
 
-func RenameFile(oldName, newName string, overwrite bool) error {
+func renameFile(oldName, newName string, overwrite bool) error {
 	if _, err := os.Stat(newName); !os.IsNotExist(err) {
 		if overwrite {
 			os.Remove(newName)
