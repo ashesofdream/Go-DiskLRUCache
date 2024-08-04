@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -33,6 +34,7 @@ type CacheEntry struct {
 	readable  bool
 	commitId  uint32
 	curEditor *DiskLRUCacheEditor
+	time      time.Time
 }
 
 func (entry *CacheEntry) GetDirtyFilename() string {
@@ -103,16 +105,15 @@ func (cache *DiskLRUCache) Edit(name string) *DiskLRUCacheEditor {
 	entry := cache.entries.Get(name)
 	// insert new entry if not exist
 	if entry == nil {
-		cache.sequential_id += 1
-		cache.entries.Set(name, CacheEntry{
+		node := cache.entries.Set(name, CacheEntry{
 			base:      cache,
 			key:       name,
 			size:      0,
 			readable:  false,
-			commitId:  cache.sequential_id,
+			commitId:  0,
 			curEditor: nil,
 		})
-		entry = cache.entries.Get(name)
+		entry = &node.val
 	}
 	//do not change readable status for that snapshot should not stuck by write
 	if entry.curEditor != nil {
@@ -120,6 +121,7 @@ func (cache *DiskLRUCache) Edit(name string) *DiskLRUCacheEditor {
 	}
 	editor := &DiskLRUCacheEditor{base: cache, entry: entry, lock: sync.RWMutex{}, isError: false, commited: false, writeSize: 0}
 	entry.curEditor = editor
+	entry.time = time.Now()
 	cache.journalFile.WriteString(
 		fmt.Sprintf("%s %s\n", DIRTY, name),
 	)
@@ -163,6 +165,7 @@ func (editor *DiskLRUCacheEditor) Commit() error {
 	defer editor.base.lock.Unlock()
 
 	if editor.entry.curEditor != editor {
+		//poped before commit
 		return nil
 	}
 	if editor.isError {
@@ -177,9 +180,12 @@ func (editor *DiskLRUCacheEditor) Commit() error {
 	editor.entry.size = editor.writeSize
 	editor.commited = true
 	editor.entry.readable = true
+	editor.entry.commitId = editor.base.sequential_id
+	editor.base.sequential_id++
 
 	_, err := editor.base.journalFile.WriteString(
-		fmt.Sprintf("%s %s %d\n", CLEAN, editor.entry.key, editor.entry.size),
+		fmt.Sprintf("%s %s %d %d\n", CLEAN, editor.entry.key,
+			editor.entry.size, editor.entry.time.UnixMilli()),
 	)
 	if err != nil {
 		os.Remove(editor.entry.GetDirtyFilename())
@@ -196,6 +202,7 @@ type DiskLRUCacheSnapshot struct {
 	Key    string
 	Size   int64
 	Reader Reader
+	Time   time.Time
 }
 
 func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
@@ -207,19 +214,19 @@ func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
 		return nil, nil
 	}
 	//wait data ready
-	// if entry.readable == false && entry.curEditor != nil {
-	// 	curEditor := entry.curEditor
-	// 	cache.lock.RUnlock()
-	// 	entry.curEditor.lock.RLock()
-	// 	cache.lock.RLock()
-	// 	// wait fail
-	// 	if entry.readable == false {
-	// 		if entry.curEditor != curEditor {
-	// 			entry.curEditor.lock.RUnlock()
-	// 		}
-	// 		return nil, nil
-	// 	}
-	// }
+	if entry.readable == false && entry.curEditor != nil {
+		curEditor := entry.curEditor
+		cache.lock.RUnlock()
+		entry.curEditor.lock.RLock()
+		cache.lock.RLock()
+		// wait fail
+		if entry.readable == false {
+			if entry.curEditor != curEditor {
+				entry.curEditor.lock.RUnlock()
+			}
+			return nil, nil
+		}
+	}
 	var reader Reader
 	// for windows,open a link to avoid file lock
 	if runtime.GOOS == "windows" {
@@ -249,9 +256,9 @@ func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
 	}
 
 	cache.journalFile.WriteString(
-		fmt.Sprintf("%s %s \n", READ, key),
+		fmt.Sprintf("%s %s\n", READ, key),
 	)
-	return &DiskLRUCacheSnapshot{key, entry.size, reader}, nil
+	return &DiskLRUCacheSnapshot{key, entry.size, reader, entry.time}, nil
 }
 
 func CreateDiskLRUCache(cachePath string, appVersion int, cacheVersion int, maxsize int64) *DiskLRUCache {
@@ -327,7 +334,7 @@ func (cache *DiskLRUCache) RebuildJournal() error {
 		if entry.curEditor != nil || entry.readable == false {
 			file.WriteString(fmt.Sprintf("%s %s\n", DIRTY, entry.key))
 		} else {
-			file.WriteString(fmt.Sprintf("%s %s %d\n", CLEAN, entry.key, entry.size))
+			file.WriteString(fmt.Sprintf("%s %s %d %d\n", CLEAN, entry.key, entry.size, entry.time.UnixMilli()))
 		}
 	}
 	file.Close()
@@ -378,6 +385,7 @@ func (cache *DiskLRUCache) parseFile(file io.Reader) error {
 	cache.maxSize = maxSize
 	cache.cacheVersion = cacheVersion
 	cache.appVersion = appVersion
+	dirtyMap := make(map[string]*DoublyLinkedListNode[CacheEntry])
 	for {
 		line, isPrefix, err = scanner.ReadLine()
 		if err != nil {
@@ -392,32 +400,42 @@ func (cache *DiskLRUCache) parseFile(file io.Reader) error {
 		strs = strings.Split(strings.TrimSpace(string(line)), " ")
 		operator := strs[0]
 		if operator == DIRTY {
-			cache.entries.Set(strs[1], CacheEntry{
+			dirty_node := cache.entries.Set(strs[1], CacheEntry{
 				base:      cache,
 				key:       strs[1],
 				size:      0,
 				readable:  false,
-				commitId:  cache.sequential_id,
+				commitId:  0,
 				curEditor: nil,
 			})
-			cache.sequential_id += 1
+			dirtyMap[strs[1]] = dirty_node
 		} else if operator == CLEAN {
-			entry := cache.entries.Get(strs[1])
-			if entry == nil {
-				entry = &CacheEntry{
+			node, ok := dirtyMap[strs[1]]
+			var entry *CacheEntry
+			if !ok {
+				//the rebuiild journal will not have dirty entry
+				node := cache.entries.Set(strs[1], CacheEntry{
 					base:      cache,
 					key:       strs[1],
 					size:      0,
 					readable:  true,
-					commitId:  cache.sequential_id,
+					commitId:  0,
 					curEditor: nil,
-				}
-				//dirty will set commitId, so we need set it here
-				cache.sequential_id += 1
+				})
+				entry = &node.val
+			} else {
+				//change dirty entry to clean entry won't change the order of LRU
+				//so we will get these nodes from dirtyMap
+				entry = &node.val
 			}
+			entry.commitId = cache.sequential_id
+			cache.sequential_id += 1
 			entry.size, _ = strconv.ParseInt(strs[2], 10, 64)
 			entry.readable = true
-			cache.entries.Set(strs[1], *entry)
+			timeStamp, _ := strconv.ParseInt(strs[3], 10, 64)
+			entry.time = time.UnixMilli(timeStamp)
+		} else if operator == READ {
+			cache.entries.Get(strs[1])
 		} else if operator == DEL {
 			entry := cache.entries.Get(strs[1])
 			if entry != nil {

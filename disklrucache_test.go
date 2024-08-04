@@ -430,6 +430,35 @@ func TestLRUCacheRacingRebuild(t *testing.T) {
 	isRunning = false
 	time.Sleep(1 * time.Second)
 	cache.Close()
+
+	fmt.Println("Test Racing Rebuild Journal Origin")
+	orgin_cache := CreateDiskLRUCache(CACHE_DIR, 1, 1, TEST_DATA_SIZE/10)
+	orgin_list := orgin_cache.entries.data_list
+	if orgin_list.size == 0 {
+		t.Errorf("racing data size is 0,please check test data")
+		return
+	}
+	orgin_head := orgin_list.head
+	target_head := cache.entries.data_list.head
+	cnt := 0
+	for orgin_head != nil && target_head != nil {
+		if orgin_head.val.key != target_head.val.key ||
+			orgin_head.val.size != target_head.val.size ||
+			orgin_head.val.time.UnixMilli() != target_head.val.time.UnixMilli() {
+			t.Errorf("node:%d,orgin_list data error, orgin:%s, target:%s,orgin_size:%d,target_size:%d,"+
+				"orgin_time:%d,target_time:%d", cnt,
+				orgin_head.val.key, target_head.val.key,
+				orgin_head.val.size, target_head.val.size,
+				orgin_head.val.time.UnixMilli(), target_head.val.time.UnixMilli(),
+			)
+			cnt++
+			return
+		}
+		orgin_head = orgin_head.next
+		target_head = target_head.next
+	}
+	orgin_cache.Close()
+
 	fmt.Println("Test Racing Rebuild Journal")
 	cache.RebuildJournal()
 	target_list := cache.entries.data_list

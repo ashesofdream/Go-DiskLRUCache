@@ -20,12 +20,14 @@ func (l *LinkedHashList[T]) Get(key string) *T {
 	return nil
 }
 
-func (l *LinkedHashList[T]) Set(key string, value T) {
+func (l *LinkedHashList[T]) Set(key string, value T) *DoublyLinkedListNode[T] {
 	val, ok := l.data_map[key]
 	if ok {
 		l.data_list.Del(val)
 	}
-	l.data_map[key] = l.data_list.PushWithKey(key, value)
+	node := l.data_list.PushWithKey(key, value)
+	l.data_map[key] = node
+	return node
 }
 
 func (l *LinkedHashList[T]) Pop() *T {
