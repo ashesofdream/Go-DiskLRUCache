@@ -47,6 +47,15 @@ func getAvailableTmpFilename(name string) string {
 	}
 	return ""
 }
+func getAvailableLinkname(name string) string {
+	for i := 0; i < 10000; i++ {
+		linkName := name + ".link" + strconv.Itoa(i)
+		if _, err := os.Stat(linkName); os.IsNotExist(err) {
+			return linkName
+		}
+	}
+	return ""
+}
 
 func renameFile(oldName, newName string, overwrite bool) error {
 	if _, err := os.Stat(newName); !os.IsNotExist(err) {

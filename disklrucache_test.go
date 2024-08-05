@@ -250,8 +250,8 @@ func InsertDataRoutine(cache *DiskLRUCache, data []fileData, productSignal chan 
 			return
 		}
 		n, err := writer.Write(d.data)
-		if editor.curSize() != int64(n) {
-			t.Errorf("InsertDataRoutine: curSize error, %d,true %d", editor.curSize(), int64(n))
+		if editor.WriteSize() != int64(n) {
+			t.Errorf("InsertDataRoutine: curSize error, %d,true %d", editor.WriteSize(), int64(n))
 			return
 		}
 		writer.Close()
@@ -277,8 +277,13 @@ func ReadDataRoutine(cache *DiskLRUCache, data []fileData, productSignalchan cha
 			continue
 		}
 		cur_data := make([]byte, snapshot.Size)
-		snapshot.Reader.Read(cur_data)
-		snapshot.Reader.Close()
+		n, err := snapshot.Reader.Read(cur_data)
+		f, _ := snapshot.Reader.(*AutoRemoveReader)
+		var name = f.Name()
+		if n == 0 {
+			t.Errorf("Name:%s", name)
+			t.Error("ReadDataRoutine: read data size error")
+		}
 		if snapshot.Size != int64(len(d.data)) {
 			t.Errorf("cache data size error, %d %d", snapshot.Size, int64(len(d.data)))
 			*isRunning = false
@@ -287,6 +292,7 @@ func ReadDataRoutine(cache *DiskLRUCache, data []fileData, productSignalchan cha
 		if rst := bytes.Compare(cur_data, d.data); rst != 0 {
 			t.Errorf("data not equal, rst:%d", rst)
 		}
+		snapshot.Reader.Close()
 	}
 }
 func TestLRUCacheRacing(t *testing.T) {
@@ -424,8 +430,11 @@ func TestLRUCacheRacingRebuild(t *testing.T) {
 	productSignal := make(chan int, TEST_DATA_NUM/10/2)
 	go InsertDataRoutine(cache, data, productSignal, &isRunning, t)
 	go InsertDataRoutine(cache, data, productSignal, &isRunning, t)
+	go InsertDataRoutine(cache, data, productSignal, &isRunning, t)
+	go DelDataRoutine(cache, data, productSignal, &isRunning, true, t)
 	go ReadDataRoutine(cache, data, productSignal, &isRunning, true, t)
 	go ReadDataRoutine(cache, data, productSignal, &isRunning, true, t)
+	go DelDataRoutine(cache, data, productSignal, &isRunning, true, t)
 	time.Sleep(3 * time.Second)
 	isRunning = false
 	time.Sleep(1 * time.Second)
@@ -560,8 +569,8 @@ func TestRemoveReader(t *testing.T) {
 		cache := CreateDiskLRUCache(CACHE_DIR, 1, 1, TEST_DATA_SIZE/10)
 		key := data[0].filename
 		editor := cache.Edit(key)
-		cache_path := editor.entry.GetDirtyFilename() + "0"
 		strem, err := editor.CreateOutputStream()
+		cache_path := editor.entry.GetCleanFilename() + ".link0"
 		if err != nil {
 			t.Error(err)
 			return
@@ -588,4 +597,113 @@ func TestRemoveReader(t *testing.T) {
 		cache.Close()
 
 	}
+}
+
+func TestRemove(t *testing.T) {
+	fmt.Printf("Testing Remove...\n")
+	data := GetAllTestData()
+	os.RemoveAll(CACHE_DIR)
+	cache := CreateDiskLRUCache(CACHE_DIR, 1, 1, TEST_DATA_SIZE/10)
+	key := data[0].filename
+	val := data[0].data
+	//Test Remove After Edit
+	editor := cache.Edit(key)
+	writer, _ := editor.CreateOutputStream()
+	writer.Write(val)
+	writer.Close()
+	editor.Commit()
+	cache.Remove(key)
+	if cache.curSize != 0 {
+		t.Errorf("curSize should be 0, but %d", cache.curSize)
+	}
+	if _, err := os.Stat(editor.entry.GetCleanFilename()); os.IsExist(err) {
+		t.Errorf("clean file shoud be deleted")
+		return
+	}
+	// Test Remove When editing
+	editor = cache.Edit(key)
+	cache.Remove(key)
+	writer, _ = editor.CreateOutputStream()
+	writer.Write(val)
+	editor.Commit()
+	writer.Close()
+	if cache.curSize != 0 {
+		t.Errorf("curSize should be 0, but %d", cache.curSize)
+	}
+	if _, err := os.Stat(editor.entry.GetCleanFilename()); os.IsExist(err) {
+		t.Errorf("clean file shoud be deleted")
+	}
+	if _, err := os.Stat(editor.tmpFilename); os.IsExist(err) {
+		t.Errorf("dirty file shoud be deleted")
+	}
+
+	// Test Remove When Write
+	editor = cache.Edit(key)
+	writer, _ = editor.CreateOutputStream()
+	cache.Remove(key)
+	writer.Write(val)
+	writer.Close()
+	editor.Commit()
+	if cache.curSize != 0 {
+		t.Errorf("curSize should be 0, but %d", cache.curSize)
+	}
+	if _, err := os.Stat(editor.tmpFilename); os.IsExist(err) {
+		t.Errorf("dirty file shoud be deleted")
+	}
+	if _, err := os.Stat(editor.entry.GetCleanFilename()); os.IsExist(err) {
+		t.Errorf("clean file shoud be deleted")
+	}
+	cache.Close()
+	return
+}
+
+func DelDataRoutine(cache *DiskLRUCache, data []fileData, productSignalchan chan int, isRunning *bool, will_miss_cache bool, t *testing.T) {
+	for *isRunning || len(productSignalchan) > 0 {
+		// idx := rand.Intn(len(data))
+		idx := <-productSignalchan
+		d := data[idx]
+		cache.Remove(d.filename)
+	}
+}
+func InsertDataRoutine2(cache *DiskLRUCache, data []fileData, productSignalchan chan int, isRunning *bool, will_miss_cache bool, t *testing.T) {
+	for *isRunning {
+		idx := rand.Intn(len(data))
+		d := data[idx]
+		editor := cache.Edit(d.filename)
+		if editor == nil {
+			continue
+		}
+		productSignalchan <- idx
+		writer, err := editor.CreateOutputStream()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		writer.Write(d.data)
+		writer.Close()
+		editor.Commit()
+	}
+}
+
+func TestRacingDel(t *testing.T) {
+	fmt.Printf("Testing Racing Del...\n")
+	data := GetAllTestData()
+	os.RemoveAll(CACHE_DIR)
+	cache := CreateDiskLRUCache(CACHE_DIR, 1, 1, TEST_DATA_SIZE/10)
+	isRunning := true
+	productSignal := make(chan int, TEST_DATA_NUM/10/10)
+	routine_num := 3
+	for i := 0; i < routine_num; i++ {
+		go InsertDataRoutine2(cache, data, productSignal, &isRunning, false, t)
+		go DelDataRoutine(cache, data, productSignal, &isRunning, false, t)
+	}
+	time.Sleep(3 * time.Second)
+	isRunning = false
+	time.Sleep(1 * time.Second)
+	cache.Close()
+	if cache.curSize != 0 {
+		t.Errorf("curSize should be 0, but %d", cache.curSize)
+	}
+	return
+
 }

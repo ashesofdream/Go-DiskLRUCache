@@ -38,7 +38,7 @@ type CacheEntry struct {
 }
 
 func (entry *CacheEntry) GetDirtyFilename() string {
-	return path.Join(entry.base.cachePath, entry.key+".tmp")
+	return getAvailableTmpFilename(entry.GetCleanFilename())
 }
 
 func (entry *CacheEntry) GetCleanFilename() string {
@@ -58,15 +58,16 @@ type DiskLRUCache struct {
 }
 
 type DiskLRUCacheEditor struct {
-	base      *DiskLRUCache
-	entry     *CacheEntry
-	lock      sync.RWMutex
-	isError   bool
-	commited  bool
-	writeSize int64
+	base        *DiskLRUCache
+	entry       *CacheEntry
+	lock        sync.RWMutex
+	isError     bool
+	commited    bool
+	writeSize   int64
+	tmpFilename string
 }
 
-func (editor *DiskLRUCacheEditor) curSize() int64 {
+func (editor *DiskLRUCacheEditor) WriteSize() int64 {
 	return editor.writeSize
 }
 func (editor *DiskLRUCacheEditor) maxSize() int64 {
@@ -119,7 +120,7 @@ func (cache *DiskLRUCache) Edit(name string) *DiskLRUCacheEditor {
 	if entry.curEditor != nil {
 		return nil
 	}
-	editor := &DiskLRUCacheEditor{base: cache, entry: entry, lock: sync.RWMutex{}, isError: false, commited: false, writeSize: 0}
+	editor := &DiskLRUCacheEditor{base: cache, entry: entry, lock: sync.RWMutex{}, isError: false, commited: false, writeSize: 0, tmpFilename: ""}
 	entry.curEditor = editor
 	entry.time = time.Now()
 	cache.journalFile.WriteString(
@@ -128,10 +129,29 @@ func (cache *DiskLRUCache) Edit(name string) *DiskLRUCacheEditor {
 	return editor
 }
 
+// Will remove anyway, even if editor is not commited
+func (cache *DiskLRUCache) Remove(name string) {
+	cache.checkNotClosed()
+	cache.lock.Lock()
+	defer cache.lock.Unlock()
+	entry := cache.entries.Del(name)
+	if entry == nil {
+		return
+	}
+	entry.curEditor = nil
+	//only remove clean file, dirty file will be removed when commit
+	os.Remove(entry.GetCleanFilename())
+	cache.curSize -= entry.size
+	cache.journalFile.WriteString(
+		fmt.Sprintf("%s %s\n", DEL, name),
+	)
+}
+
 // will return a output stream, which will record write num
 func (editor *DiskLRUCacheEditor) CreateOutputStream() (io.WriteCloser, error) {
 	editor.lock.Lock()
-	file, err := os.OpenFile(editor.entry.GetDirtyFilename(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	editor.tmpFilename = editor.entry.GetDirtyFilename()
+	file, err := os.OpenFile(editor.tmpFilename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
 		editor.isError = true
 	}
@@ -144,7 +164,7 @@ func (editor *DiskLRUCacheEditor) CreateInputStream() (io.ReadCloser, error) {
 		return nil, nil
 	}
 	if runtime.GOOS == "windows" {
-		tmpName := getAvailableTmpFilename(editor.entry.GetCleanFilename())
+		tmpName := getAvailableLinkname(editor.entry.GetCleanFilename())
 		err := os.Link(editor.entry.GetCleanFilename(), tmpName)
 		if err != nil {
 			return nil, err
@@ -165,12 +185,13 @@ func (editor *DiskLRUCacheEditor) Commit() error {
 	defer editor.base.lock.Unlock()
 
 	if editor.entry.curEditor != editor {
-		//poped before commit
+		//remove before commit
+		os.Remove(editor.tmpFilename)
 		return nil
 	}
 	if editor.isError {
 		//TODO: deal error
-		os.Remove(editor.entry.GetDirtyFilename())
+		os.Remove(editor.tmpFilename)
 		os.Remove(editor.entry.GetCleanFilename())
 		return nil
 	}
@@ -188,11 +209,10 @@ func (editor *DiskLRUCacheEditor) Commit() error {
 			editor.entry.size, editor.entry.time.UnixMilli()),
 	)
 	if err != nil {
-		os.Remove(editor.entry.GetDirtyFilename())
+		os.Remove(editor.tmpFilename)
 		return err
 	}
-	os.Remove(editor.entry.GetCleanFilename())
-	os.Rename(editor.entry.GetDirtyFilename(), editor.entry.GetCleanFilename())
+	renameFile(editor.tmpFilename, editor.entry.GetCleanFilename(), true)
 
 	editor.base.checkFull()
 	return err
@@ -230,7 +250,7 @@ func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
 	var reader Reader
 	// for windows,open a link to avoid file lock
 	if runtime.GOOS == "windows" {
-		tmpName := getAvailableTmpFilename(entry.GetCleanFilename())
+		tmpName := getAvailableLinkname(entry.GetCleanFilename())
 		err := os.Link(entry.GetCleanFilename(), tmpName)
 		if err != nil {
 			return nil, err
