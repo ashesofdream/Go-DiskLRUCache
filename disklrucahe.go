@@ -163,7 +163,7 @@ func (editor *DiskLRUCacheEditor) CreateAppendStream() (io.WriteCloser, error) {
 	if editor.tmpFilename == "" {
 		editor.tmpFilename = editor.entry.GetDirtyFilename()
 	}
-	file, err := os.OpenFile(editor.tmpFilename, os.O_CREATE|os.O_APPEND, 0666)
+	file, err := os.OpenFile(editor.tmpFilename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
 	if err != nil {
 		editor.isError = true
 	}
@@ -246,19 +246,19 @@ func (cache *DiskLRUCache) Get(key string) (*DiskLRUCacheSnapshot, error) {
 		return nil, nil
 	}
 	//wait data ready
-	if entry.readable == false && entry.curEditor != nil {
-		curEditor := entry.curEditor
-		cache.lock.RUnlock()
-		entry.curEditor.lock.RLock()
-		cache.lock.RLock()
-		// wait fail
-		if entry.readable == false {
-			if entry.curEditor != curEditor {
-				entry.curEditor.lock.RUnlock()
-			}
-			return nil, nil
-		}
-	}
+	// if entry.readable == false && entry.curEditor != nil {
+	// 	curEditor := entry.curEditor
+	// 	cache.lock.RUnlock()
+	// 	entry.curEditor.lock.RLock()
+	// 	cache.lock.RLock()
+	// 	// wait fail
+	// 	if entry.readable == false {
+	// 		if entry.curEditor != curEditor {
+	// 			entry.curEditor.lock.RUnlock()
+	// 		}
+	// 		return nil, nil
+	// 	}
+	// }
 	var reader Reader
 	// for windows,open a link to avoid file lock
 	if runtime.GOOS == "windows" {
