@@ -158,6 +158,18 @@ func (editor *DiskLRUCacheEditor) CreateOutputStream() (io.WriteCloser, error) {
 	return &EditorWriter{file: file, editor: editor}, err
 }
 
+func (editor *DiskLRUCacheEditor) CreateAppendStream() (io.WriteCloser, error) {
+	editor.lock.Lock()
+	if editor.tmpFilename == "" {
+		editor.tmpFilename = editor.entry.GetDirtyFilename()
+	}
+	file, err := os.OpenFile(editor.tmpFilename, os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		editor.isError = true
+	}
+	return &EditorWriter{file: file, editor: editor}, err
+}
+
 // Would Not lock
 func (editor *DiskLRUCacheEditor) CreateInputStream() (io.ReadCloser, error) {
 	if editor.entry.readable == false {
