@@ -21,6 +21,16 @@ func (w *EditorWriter) Close() error {
 	return w.file.Close()
 }
 
+func (w *EditorWriter) Seek(offset int64, whence int) (int64, error) {
+	return w.file.Seek(offset, whence)
+}
+
+func (w *EditorWriter) WriteAt(p []byte, off int64) (n int, err error) {
+	n, err = w.file.WriteAt(p, off)
+	w.editor.writeSize += int64(n)
+	return n, err
+}
+
 type Reader interface {
 	io.Reader
 	io.ReaderAt
