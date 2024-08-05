@@ -169,14 +169,14 @@ func (editor *DiskLRUCacheEditor) CreateAppendStream() (io.WriteCloser, error) {
 	}
 	return &EditorWriter{file: file, editor: editor}, err
 }
-func (editor *DiskLRUCacheEditor) CreateRandomWriter() (EditorWriter, error) {
+func (editor *DiskLRUCacheEditor) CreateRandomWriter() (*EditorWriter, error) {
 	editor.lock.Lock()
 	editor.tmpFilename = editor.entry.GetDirtyFilename()
 	file, err := os.OpenFile(editor.tmpFilename, os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		editor.isError = true
 	}
-	return EditorWriter{file: file, editor: editor}, err
+	return &EditorWriter{file: file, editor: editor}, err
 }
 
 // Would Not lock
