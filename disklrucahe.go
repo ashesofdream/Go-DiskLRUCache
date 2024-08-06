@@ -67,8 +67,18 @@ type DiskLRUCacheEditor struct {
 	tmpFilename string
 }
 
+// get the size that have written,do not care overlap
 func (editor *DiskLRUCacheEditor) WriteSize() int64 {
 	return editor.writeSize
+}
+
+// get the true filesize
+func (editor *DiskLRUCacheEditor) FileSize() int64 {
+	info, err := os.Stat(editor.tmpFilename)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
 func (editor *DiskLRUCacheEditor) maxSize() int64 {
 	return editor.entry.base.maxSize
@@ -218,8 +228,8 @@ func (editor *DiskLRUCacheEditor) Commit() error {
 	}
 
 	editor.entry.curEditor = nil
-	editor.base.curSize += (editor.writeSize - editor.entry.size)
-	editor.entry.size = editor.writeSize
+	editor.base.curSize += (editor.FileSize() - editor.entry.size)
+	editor.entry.size = editor.FileSize()
 	editor.commited = true
 	editor.entry.readable = true
 	editor.entry.commitId = editor.base.sequential_id
