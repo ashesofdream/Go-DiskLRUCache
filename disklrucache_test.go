@@ -382,11 +382,12 @@ func TestLRUCacheRebuildJournal(t *testing.T) {
 	}
 	fmt.Println("Test Origin Journal Success")
 
-	fmt.Println("Test Rebuild Journal")
+	fmt.Println("Test Rebuild Journal and Cache Size Become Larger")
 	origin_cache.RebuildJournal()
 	origin_cache.Close()
 
-	rebuid_cache := CreateDiskLRUCache(CACHE_DIR, 1, 1, TEST_DATA_SIZE/10)
+	// test the cache data size change in the same time
+	rebuid_cache := CreateDiskLRUCache(CACHE_DIR, 1, 1, TEST_DATA_SIZE/2)
 	rebuild_list := rebuid_cache.entries.data_list
 	if rebuild_list.size != target_list.size {
 		t.Errorf("rebuild_list len error, rebuild:%d, target:%d", rebuild_list.size, target_list.size)
@@ -416,6 +417,20 @@ func TestLRUCacheRebuildJournal(t *testing.T) {
 	}
 	rebuid_cache.Close()
 
+	fmt.Println("Test Rebuild Journal and Cache Size Become Smaller")
+	rebuid_cache = CreateDiskLRUCache(CACHE_DIR, 1, 1, TEST_DATA_SIZE/20)
+	rebuild_map = rebuid_cache.entries.data_map
+	for key, node := range rebuild_map {
+		if node.val.size != target_map[key].val.size {
+			t.Errorf("rebuild_map data size error, rebuild:%d, target:%d", node.val.size, target_map[key].val.size)
+			return
+		}
+	}
+	if rebuid_cache.maxSize != TEST_DATA_SIZE/20 || rebuid_cache.curSize > TEST_DATA_SIZE/20 {
+		t.Errorf("cache maxSize error, %d, %d", cache.maxSize, TEST_DATA_SIZE/20)
+		return
+	}
+	rebuid_cache.Close()
 	fmt.Println("Test Rebuild Journal Success")
 
 }

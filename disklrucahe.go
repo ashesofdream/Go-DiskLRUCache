@@ -408,6 +408,7 @@ func (cache *DiskLRUCache) RebuildJournal() error {
 }
 
 func (cache *DiskLRUCache) parseFile(file io.Reader) error {
+	need_rebuild := false
 	scanner := bufio.NewReader(file)
 	line, isPrefix, err := scanner.ReadLine()
 	if err != nil || isPrefix {
@@ -431,9 +432,9 @@ func (cache *DiskLRUCache) parseFile(file io.Reader) error {
 		return NewJournalVersionError()
 	}
 	if cache.maxSize != 0 && maxSize != cache.maxSize {
-		log.Panic(nil, "max size in journal file is %d, but current max size is %d,update", maxSize, MAX_FILE_SIZE)
+		log.Printf("Warning: max size in journal file is %d, but current max size is %d,rebuild\n", maxSize, MAX_FILE_SIZE)
+		need_rebuild = true
 	}
-	cache.maxSize = maxSize
 	cache.cacheVersion = cacheVersion
 	cache.appVersion = appVersion
 	dirtyMap := make(map[string]*DoublyLinkedListNode[CacheEntry])
@@ -495,7 +496,15 @@ func (cache *DiskLRUCache) parseFile(file io.Reader) error {
 		} else {
 			log.Panicf("unknown journal operator:%s", operator)
 		}
-
+	}
+	if need_rebuild {
+		if err := cache.RebuildJournal(); err != nil {
+			return err
+		}
+		//if cache size become larger than max size, we need shrink the cache
+		cache.lock.Lock()
+		defer cache.lock.Unlock()
+		cache.checkFull()
 	}
 	return nil
 }
